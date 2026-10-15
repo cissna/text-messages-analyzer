@@ -5,6 +5,7 @@ chat.db-*
 *.abcddb
 *.db
 *.db-*
+claude-chat-resume.txt
 
 # Generated
 sample/
