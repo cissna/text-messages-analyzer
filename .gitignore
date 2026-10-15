@@ -1,0 +1,12 @@
+# Personal data — never commit
+chat.db
+chat.db-*
+*.vcf
+*.abcddb
+*.db
+*.db-*
+
+# Generated
+sample/
+__pycache__/
+.DS_Store

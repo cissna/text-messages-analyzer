@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./chat.db)",
+      "Read(./chat.db-*)",
+      "Read(~/Library/Messages/**)",
+      "Read(~/Library/Application Support/AddressBook/**)",
+      "Read(~/.chat-viewer/**)",
+      "Bash(sqlite3 chat.db*)",
+      "Bash(sqlite3 ./chat.db*)",
+      "Bash(sqlite3 ~/Library/Messages*)",
+      "Bash(python3 chatview.py)",
+      "Bash(python3 chatview.py --db ./chat.db*)"
+    ]
+  }
+}
