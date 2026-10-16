@@ -55,7 +55,7 @@ python3 top_chats.py --n 100                  # longer list
 python3 top_chats.py --gc                     # also count group chats you share with each person
 python3 top_chats.py --gc conservative        # ...but only messages directly after the other person's
 python3 top_chats.py --days 31                # only the last 31 days
-python3 top_chats.py --per-day --min-days 7   # messages per day, ignoring histories shorter than a week
+python3 top_chats.py --per-day --min-span 7   # messages per day, ignoring histories shorter than a week
 ```
 
 - **Counted:** text messages only (no reactions, edit versions, or group events). Unsent messages still count.
@@ -64,7 +64,8 @@ python3 top_chats.py --per-day --min-days 7   # messages per day, ignoring histo
   the other person, so a run of several messages after yours counts once.
 - **`--per-day`:** divides each count by the days from your first to your last counted message with that
   person (both days included) and ranks by that rate. With `--days`, the span is measured within the window.
-  Pair it with `--min-days N` so a one-day burst of texts doesn't top the list.
+  Add `--min-span N` (only allowed with `--per-day`) to skip people whose span is under N days, so a
+  one-day burst of texts doesn't top the list.
 
 ## Trying it without real data
 

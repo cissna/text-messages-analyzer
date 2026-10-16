@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """top_chats — rank the people you text most, with a clickable breakdown.
 
-    python3 top_chats.py [--n 50] [--gc [conservative]] [--days N] [--per-day] [--min-days N]
+    python3 top_chats.py [--n 50] [--gc [conservative]] [--days N] [--per-day [--min-span N]]
                          [--db PATH] [--contacts PATH ...] [--me NAME] [--out DIR] [--no-open]
 
 Counts text messages (not reactions, edits, or group events) per person:
@@ -17,8 +17,8 @@ Counts text messages (not reactions, edits, or group events) per person:
 --per-day divides each count by the number of days from your first to your last counted
 message with that person (both days included), and ranks by that daily rate.
 
---min-days N drops people whose first-to-last span is shorter than N days, so a one-day
-burst of texts doesn't top a per-day ranking.
+--min-span N (only with --per-day) drops people whose first-to-last span is shorter than
+N days, so a one-day burst of texts doesn't top the ranking.
 
 Writes a self-contained HTML page; click a row to see the me-vs-them split
 (and, with --gc, every chat you've messaged in).
@@ -211,8 +211,9 @@ def main():
     ap.add_argument("--days", type=int, help="only count messages from the last N days (e.g. 31 for a month)")
     ap.add_argument("--per-day", action="store_true",
                     help="divide counts by days from first to last message and rank by that daily rate")
-    ap.add_argument("--min-days", type=int, default=1, metavar="N",
-                    help="skip people whose first-to-last message span is under N days (default 1 = keep everyone)")
+    ap.add_argument("--min-span", type=int, metavar="MIN",
+                    help="with --per-day: skip people whose first-to-last message span is under MIN days "
+                         "(e.g. 5 filters out one-day conversations)")
     ap.add_argument("--db", help="path to chat.db (default: ./chat.db if present, else ~/Library/Messages/chat.db)")
     ap.add_argument("--contacts", action="append",
                     help="a .vcf or AddressBook-v22.abcddb file (repeatable; default: *.vcf next to this script)")
@@ -220,6 +221,10 @@ def main():
     ap.add_argument("--out", default=OUT_DIR, help=f"where to write the page (default {OUT_DIR})")
     ap.add_argument("--no-open", action="store_true", help="don't open the browser")
     args = ap.parse_args()
+    if args.min_span is not None and not args.per_day:
+        ap.error("--min-span requires --per-day")
+    if args.min_span is not None and args.min_span < 1:
+        ap.error("--min-span must be a positive number")
 
     db_path = args.db or (os.path.join(SCRIPT_DIR, "chat.db") if os.path.exists(os.path.join(SCRIPT_DIR, "chat.db"))
                           else LIVE_DB)
@@ -240,10 +245,10 @@ def main():
         # Clamp: a window reaching before 2001 covers everything, and avoids SQLite integer overflow.
         since_ns = max(0, (int(time.time()) - args.days * 86400) * NS - APPLE_EPOCH_NS)
     people, chats_by_person = count_messages(db, args.gc, since_ns)
-    people = {k: p for k, p in people.items() if calendar_days(p["first"], p["last"]) >= args.min_days}
+    people = {k: p for k, p in people.items() if calendar_days(p["first"], p["last"]) >= (args.min_span or 1)}
     ranked = sorted(people.values(), key=lambda p: -score(p, args.per_day))[:args.n]
     if not ranked:
-        print("  No people match (check --days / --min-days)." if args.days or args.min_days > 1
+        print("  No people match (check --days / --min-span)." if args.days or args.min_span
               else "  No messages found.")
     for i, p in enumerate(ranked, 1):
         span = calendar_days(p["first"], p["last"])
