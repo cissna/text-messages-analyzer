@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """top_chats — rank the people you text most, with a clickable breakdown.
 
-    python3 top_chats.py [--n 50] [--gc [conservative]] [--days N] [--db PATH] [--contacts PATH ...]
-                         [--me NAME] [--out DIR] [--no-open]
+    python3 top_chats.py [--n 50] [--gc [conservative]] [--days N] [--per-day] [--min-days N]
+                         [--db PATH] [--contacts PATH ...] [--me NAME] [--out DIR] [--no-open]
 
 Counts text messages (not reactions, edits, or group events) per person:
   * 1:1 chats: every message in the chat.
@@ -14,6 +14,12 @@ Counts text messages (not reactions, edits, or group events) per person:
 
 --days N limits everything to the last N days (e.g. --days 31 for the last month).
 
+--per-day divides each count by the number of days from your first to your last counted
+message with that person (both days included), and ranks by that daily rate.
+
+--min-days N drops people whose first-to-last span is shorter than N days, so a one-day
+burst of texts doesn't top a per-day ranking.
+
 Writes a self-contained HTML page; click a row to see the me-vs-them split
 (and, with --gc, every chat you've messaged in).
 """
@@ -21,7 +27,6 @@ import argparse
 import glob
 import html
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -29,11 +34,16 @@ import time
 from collections import defaultdict
 from datetime import datetime
 
-from chatview import (ADDRESSBOOK_GLOBS, APPLE_EPOCH_NS, LIVE_DB, NS, OUT_DIR, SCRIPT_DIR, ChatDB, load_contacts)
+from chatview import (ADDRESSBOOK_GLOBS, APPLE_EPOCH_NS, LIVE_DB, NS, OUT_DIR, SCRIPT_DIR, ChatDB, load_contacts,
+                      to_unix_ns)
 
 
 def count_messages(db, gc_mode, since_ns=None):
-    """Return (people, chats_by_person): people[key] = {'name', 'me', 'them'}; chats_by_person[key] = {chat_id: row}."""
+    """Return (people, chats_by_person).
+
+    people[key] = {'name', 'me', 'them', 'first', 'last'} (first/last are unix ns of counted messages);
+    chats_by_person[key] = {chat_id: {'me', 'them', 'label', 'group'}}.
+    """
     chats = {r["ROWID"]: dict(style=r["style"], name=r["display_name"], members=[])
              for r in db.con.execute("SELECT ROWID, style, display_name FROM chat")}
     for cid, h in db.con.execute("SELECT chat_id, handle_id FROM chat_handle_join"):
@@ -46,23 +56,23 @@ def count_messages(db, gc_mode, since_ns=None):
         "WHERE COALESCE(m.associated_message_type, 0) = 0 AND COALESCE(m.item_type, 0) = 0 "
         "AND m.date >= ? ORDER BY cmj.chat_id, m.date, m.ROWID", (since_ns or 0,))
 
-    by_chat = defaultdict(list)  # chat_id -> [(is_me, person_key, handle_id)]
-    for cid, _, handle, from_me, _ in rows:
+    by_chat = defaultdict(list)  # chat_id -> [(is_me, person_key, handle_id, unix_ns)]
+    for cid, _, handle, from_me, date in rows:
         is_me = bool(from_me) or not handle
-        by_chat[cid].append((is_me, None if is_me else db.person_of(handle), handle))
+        by_chat[cid].append((is_me, None if is_me else db.person_of(handle), handle, to_unix_ns(date)))
 
     people = {}
     chats_by_person = defaultdict(dict)
 
-    def entry(key, handle):
+    def add(key, handle, chat_id, me_n, them_n, dates):
         if key not in people:
-            people[key] = {"name": db.name_of(handle, 0), "me": 0, "them": 0}
-        return people[key]
-
-    def add(key, handle, chat_id, me_n, them_n):
-        e = entry(key, handle)
+            people[key] = {"name": db.name_of(handle, 0), "me": 0, "them": 0, "first": None, "last": None}
+        e = people[key]
         e["me"] += me_n
         e["them"] += them_n
+        if dates:
+            e["first"] = min(dates) if e["first"] is None else min(e["first"], min(dates))
+            e["last"] = max(dates) if e["last"] is None else max(e["last"], max(dates))
         row = chats_by_person[key].setdefault(chat_id, {"me": 0, "them": 0})
         row["me"] += me_n
         row["them"] += them_n
@@ -71,14 +81,14 @@ def count_messages(db, gc_mode, since_ns=None):
         ch = chats.get(cid)
         if ch is None:
             continue
-        members = [h for h in ch["members"]]
+        members = ch["members"]
         is_group = ch["style"] == 43 or len(members) > 1
         if not is_group:
             if not members:
                 continue
             key = db.person_of(members[0])
-            for is_me, _, _ in msgs:
-                add(key, members[0], cid, int(is_me), int(not is_me))
+            add(key, members[0], cid, sum(1 for m in msgs if m[0]), sum(1 for m in msgs if not m[0]),
+                [m[3] for m in msgs])
             continue
 
         if gc_mode is None:
@@ -87,48 +97,68 @@ def count_messages(db, gc_mode, since_ns=None):
         others = {db.person_of(h): h for h in members}
         for key, handle in others.items():
             if gc_mode == "normal":
-                me_n = sum(1 for is_me, _, _ in msgs if is_me)
-                them_n = sum(1 for is_me, k, _ in msgs if not is_me and k == key)
+                counted = [m for m in msgs if m[0] or m[1] == key]
             else:
-                me_n = them_n = 0
+                counted = []
                 prev = None  # None (no one yet) | "me" | person key
-                for is_me, k, _ in msgs:
-                    side = "me" if is_me else k
-                    if side == "me" and prev == key:
-                        me_n += 1
-                    elif side == key and prev == "me":
-                        them_n += 1
+                for m in msgs:
+                    side = "me" if m[0] else m[1]
+                    if (side == "me" and prev == key) or (side == key and prev == "me"):
+                        counted.append(m)
                     prev = side
-            if me_n or them_n:
-                add(key, handle, cid, me_n, them_n)
-        # Keep chat names for the breakdown list.
-        for key in others:
-            if key in chats_by_person and cid in chats_by_person[key]:
-                chats_by_person[key][cid]["label"] = ch["name"] or "Group: " + ", ".join(
-                    sorted({db.name_of(h, 0) for h in members}))
-                chats_by_person[key][cid]["group"] = True
+            me_n = sum(1 for m in counted if m[0])
+            them_n = len(counted) - me_n
+            if counted:
+                add(key, handle, cid, me_n, them_n, [m[3] for m in counted])
+                row = chats_by_person[key][cid]
+                row["label"] = ch["name"] or "Group: " + ", ".join(sorted({db.name_of(h, 0) for h in members}))
+                row["group"] = True
 
     for key, per_chat in chats_by_person.items():
         for cid, row in per_chat.items():
             if "label" not in row:
-                ch = chats.get(cid, {})
-                members = ch.get("members", [])
+                members = chats.get(cid, {}).get("members", [])
                 row["label"] = db.name_of(members[0], 0) if members else f"chat {cid}"
                 row["group"] = False
     return people, chats_by_person
 
 
-def render(people, chats_by_person, top, gc_mode, me, title_date, days=None):
-    ranked = sorted(people.items(), key=lambda kv: -(kv[1]["me"] + kv[1]["them"]))[:top]
+def calendar_days(first_ns, last_ns):
+    """Days from first to last message, counting both ends (a single-day history is 1)."""
+    a = datetime.fromtimestamp(first_ns // NS).date()
+    b = datetime.fromtimestamp(last_ns // NS).date()
+    return (b - a).days + 1
+
+
+def score(p, per_day):
+    total = p["me"] + p["them"]
+    if not per_day:
+        return total
+    return total / calendar_days(p["first"], p["last"])
+
+
+def fmt_score(p, per_day):
+    total = p["me"] + p["them"]
+    return f"{score(p, per_day):,.2f}/day" if per_day else f"{total:,}"
+
+
+def render(people, chats_by_person, top, gc_mode, me, title_date, days=None, per_day=False):
+    ranked = sorted(people.items(), key=lambda kv: -score(kv[1], per_day))[:top]
     show_chats = gc_mode is not None
     period = "" if days is None else f" · last {days} day{'s' if days != 1 else ''}"
+    rate = " · counts per day" if per_day else ""
     mode_text = {None: "1:1 chats only", "normal": "1:1 + all shared group messages",
                  "conservative": "1:1 + group messages directly after the other person's"}[gc_mode]
     rows = []
     for rank, (key, p) in enumerate(ranked, 1):
         total = p["me"] + p["them"]
+        span = calendar_days(p["first"], p["last"])
         detail = [f"<p><strong>{html.escape(me)}:</strong> {p['me']:,} · "
-                  f"<strong>{html.escape(p['name'])}:</strong> {p['them']:,}</p>"]
+                  f"<strong>{html.escape(p['name'])}:</strong> {p['them']:,} · "
+                  f"{total:,} total</p>",
+                  f"<p>{datetime.fromtimestamp(p['first'] // NS):%Y-%m-%d} → "
+                  f"{datetime.fromtimestamp(p['last'] // NS):%Y-%m-%d} ({span:,} day{'s' if span != 1 else ''})"
+                  f"{f' · {total / span:,.2f}/day' if per_day else ''}</p>"]
         if show_chats:
             detail.append("<p class='label'>Chats</p><ul>")
             for cid, row in sorted(chats_by_person[key].items(), key=lambda kv: -(kv[1]["me"] + kv[1]["them"])):
@@ -138,7 +168,7 @@ def render(people, chats_by_person, top, gc_mode, me, title_date, days=None):
             detail.append("</ul>")
         rows.append(f"<details><summary><span class='rank'>{rank}.</span> "
                     f"<span class='name'>{html.escape(p['name'])}</span> "
-                    f"<span class='count'>{total:,}</span></summary>"
+                    f"<span class='count'>{fmt_score(p, per_day)}</span></summary>"
                     f"<div class='detail'>{''.join(detail)}</div></details>")
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>Top {top} chats</title>
@@ -165,7 +195,7 @@ def render(people, chats_by_person, top, gc_mode, me, title_date, days=None):
 </style></head>
 <body>
 <h1>Top {top} people by text count</h1>
-<p class="meta">{html.escape(mode_text)}{html.escape(period)} · generated {html.escape(title_date)} · click a row for the breakdown</p>
+<p class="meta">{html.escape(mode_text)}{html.escape(period)}{html.escape(rate)} · generated {html.escape(title_date)} · click a row for the breakdown</p>
 {''.join(rows)}
 </body></html>
 """
@@ -177,6 +207,10 @@ def main():
     ap.add_argument("--gc", nargs="?", const="normal", choices=["normal", "conservative"], default=None,
                     help="include group chats you share with each person; add 'conservative' for the stricter count")
     ap.add_argument("--days", type=int, help="only count messages from the last N days (e.g. 31 for a month)")
+    ap.add_argument("--per-day", action="store_true",
+                    help="divide counts by days from first to last message and rank by that daily rate")
+    ap.add_argument("--min-days", type=int, default=1, metavar="N",
+                    help="skip people whose first-to-last message span is under N days (default 1 = keep everyone)")
     ap.add_argument("--db", help="path to chat.db (default: ./chat.db if present, else ~/Library/Messages/chat.db)")
     ap.add_argument("--contacts", action="append",
                     help="a .vcf or AddressBook-v22.abcddb file (repeatable; default: *.vcf next to this script)")
@@ -204,18 +238,22 @@ def main():
         # Clamp: a window reaching before 2001 covers everything, and avoids SQLite integer overflow.
         since_ns = max(0, (int(time.time()) - args.days * 86400) * NS - APPLE_EPOCH_NS)
     people, chats_by_person = count_messages(db, args.gc, since_ns)
-    ranked = sorted(people.values(), key=lambda p: -(p["me"] + p["them"]))[:args.n]
+    people = {k: p for k, p in people.items() if calendar_days(p["first"], p["last"]) >= args.min_days}
+    ranked = sorted(people.values(), key=lambda p: -score(p, args.per_day))[:args.n]
     if not ranked:
-        print("  No messages in that window." if args.days else "  No messages found.")
+        print("  No people match (check --days / --min-days)." if args.days or args.min_days > 1
+              else "  No messages found.")
     for i, p in enumerate(ranked, 1):
-        print(f"  {i:>3}. {p['name']:<30} {p['me'] + p['them']:>8,}")
+        print(f"  {i:>3}. {p['name']:<30} {fmt_score(p, args.per_day):>16}")
 
     os.makedirs(args.out, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    suffix = ("" if args.gc is None else f"-gc-{args.gc}") + ("" if args.days is None else f"-{args.days}d")
+    suffix = ("" if args.gc is None else f"-gc-{args.gc}") + ("" if args.days is None else f"-{args.days}d") + \
+        ("-per-day" if args.per_day else "")
     path = os.path.join(args.out, f"top-chats{suffix}-{stamp}.html")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(render(people, chats_by_person, args.n, args.gc, args.me, datetime.now().strftime("%Y-%m-%d %H:%M"), args.days))
+        f.write(render(people, chats_by_person, args.n, args.gc, args.me, datetime.now().strftime("%Y-%m-%d %H:%M"),
+                       args.days, args.per_day))
     if not args.no_open:
         if sys.platform == "darwin":
             subprocess.run(["open", path])
