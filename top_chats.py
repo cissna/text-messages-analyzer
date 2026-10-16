@@ -168,6 +168,7 @@ def render(people, chats_by_person, top, gc_mode, me, title_date, days=None, per
             detail.append("</ul>")
         rows.append(f"<details><summary><span class='rank'>{rank}.</span> "
                     f"<span class='name'>{html.escape(p['name'])}</span> "
+                    f"<span class='span'>{span:,} day{'s' if span != 1 else ''}</span> "
                     f"<span class='count'>{fmt_score(p, per_day)}</span></summary>"
                     f"<div class='detail'>{''.join(detail)}</div></details>")
     return f"""<!doctype html>
@@ -185,7 +186,8 @@ def render(people, chats_by_person, top, gc_mode, me, title_date, days=None, per
   summary:hover {{ background: var(--pill); }}
   .rank {{ color: var(--muted); width: 2.5em; text-align: right; font-variant-numeric: tabular-nums; }}
   .name {{ flex: 1; }}
-  .count {{ font-variant-numeric: tabular-nums; font-weight: 600; }}
+  .span {{ color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }}
+  .count {{ min-width: 6em; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }}
   .detail {{ padding: 4px 4px 12px 3.5em; color: var(--muted); font-size: 14px; }}
   .detail strong {{ color: var(--fg); font-weight: 600; }}
   .detail p {{ margin: 4px 0; }}
@@ -244,7 +246,8 @@ def main():
         print("  No people match (check --days / --min-days)." if args.days or args.min_days > 1
               else "  No messages found.")
     for i, p in enumerate(ranked, 1):
-        print(f"  {i:>3}. {p['name']:<30} {fmt_score(p, args.per_day):>16}")
+        span = calendar_days(p["first"], p["last"])
+        print(f"  {i:>3}. {p['name']:<30} {fmt_score(p, args.per_day):>14}  {span:>5,} day{'s' if span != 1 else ' '}")
 
     os.makedirs(args.out, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
