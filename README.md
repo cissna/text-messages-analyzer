@@ -44,6 +44,28 @@ python3 chatview.py jane --me Isaac # label your messages "Isaac" instead of "Me
 
 Viewer files are written to `~/.chat-viewer/`, outside the repo.
 
+## Top chats
+
+`top_chats.py` ranks the people you text most and writes an HTML page; click a row to see
+the me-vs-them split (and, with `--gc`, every chat you've messaged in).
+
+```sh
+python3 top_chats.py                          # top 50 by 1:1 message count
+python3 top_chats.py --n 100                  # longer list
+python3 top_chats.py --gc                     # also count group chats you share with each person
+python3 top_chats.py --gc conservative        # ...but only messages directly after the other person's
+python3 top_chats.py --days 31                # only the last 31 days
+python3 top_chats.py --per-day --min-days 7   # messages per day, ignoring histories shorter than a week
+```
+
+- **Counted:** text messages only (no reactions, edit versions, or group events). Unsent messages still count.
+- **`--gc`:** counts all of your messages and all of theirs in each group you both belong to.
+  **`--gc conservative`** counts only a message whose immediately preceding message in the group came from
+  the other person, so a run of several messages after yours counts once.
+- **`--per-day`:** divides each count by the days from your first to your last counted message with that
+  person (both days included) and ranks by that rate. With `--days`, the span is measured within the window.
+  Pair it with `--min-days N` so a one-day burst of texts doesn't top the list.
+
 ## Trying it without real data
 
 ```sh
