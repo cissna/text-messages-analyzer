@@ -67,11 +67,45 @@ python3 top_chats.py --per-day --min-span 7   # messages per day, ignoring histo
   Add `--min-span N` (only allowed with `--per-day`) to skip people whose span is under N days, so a
   one-day burst of texts doesn't top the list.
 
+## Daily text chart
+
+`daily_chats.py` opens a self-contained HTML stacked bar chart. Each bar is one local
+calendar day; each color is a person, combining texts you sent and received.
+
+```sh
+python3 daily_chats.py                         # last 31 days, including today
+python3 daily_chats.py --days 90               # last 90 calendar days
+python3 daily_chats.py --days -1               # all history through today
+python3 daily_chats.py --gc                    # attribute shared group messages to each person
+python3 daily_chats.py --gc conservative       # group messages directly after the other person's
+python3 daily_chats.py --gc separated          # each group is its own series
+python3 daily_chats.py --min-messages 10       # require one day with at least 10 sent + received
+```
+
+- Without `--gc`, only 1:1 chats count. `--gc` (or `--gc normal`) and
+  `--gc conservative` use the same attribution as Top chats. In normal mode, a group
+  text you send counts for each member, so stacked totals include those repeated counts.
+- `--gc separated` counts each group message once, under the group's name (or its
+  members' names for unnamed groups), separately from your 1:1 conversations.
+- `--min-messages` defaults to **5**. People without at least one day meeting that
+  combined sent + received count **within the selected window** go into **Other**.
+  Separated groups follow the same rule. Use `--min-messages 0` to show everyone.
+- Hover over a segment for an instant tooltip with the name, date, and sent/received
+  counts. Double-click a segment to highlight that person across all days; double-click
+  again, press Escape, or use **Clear highlight** to reset. Legend buttons also highlight.
+- Days without messages are included. Long histories scroll horizontally.
+
+The script uses the same message exclusions, contact lookup, `--db`, `--contacts`,
+`--me`, and `--out` options as the other viewers. Pages go to `~/.chat-viewer/` by
+default and work offline with no additional dependencies. Add `--no-open` to generate
+the page without opening your browser.
+
 ## Trying it without real data
 
 ```sh
 python3 make_sample_db.py   # writes a fake sample/chat.db + sample/contacts.vcf
 python3 chatview.py jane --db sample/chat.db --contacts sample/contacts.vcf --out sample/out
+python3 daily_chats.py --db sample/chat.db --contacts sample/contacts.vcf --days -1 --gc separated --out sample/out
 ```
 
 The fake database mirrors the macOS 15 schema and covers the edge cases (edits, unsends,

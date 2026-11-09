@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily texts</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6fa; --card: #fff; --fg: #202436; --muted: #657086;
+    --line: #e3e7ef; --accent: #435cc8; --soft: #eff2fc;
+    --tooltip: #202436; --tooltip-fg: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171d; --card: #1e222c; --fg: #edf0f8; --muted: #a9b3c7;
+      --line: #343c4d; --accent: #a6b5ff; --soft: #2b3454;
+      --tooltip: #f0f3fb; --tooltip-fg: #202436;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 1440px; margin: 0 auto; padding: 40px 28px 64px; }
+  .eyebrow { margin: 0 0 5px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: clamp(26px, 4vw, 36px); line-height: 1.2; letter-spacing: -.035em; }
+  .meta { margin: 10px 0 24px; color: var(--muted); font-size: 13px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 18px 48px; margin: 0 0 24px; }
+  .stat { display: grid; gap: 1px; }
+  .stat strong { font-size: 25px; line-height: 1.3; font-variant-numeric: tabular-nums; font-weight: 650; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 22px 18px; }
+  .chart-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 20px; }
+  h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .help { color: var(--muted); margin: 3px 0 0; font-size: 12px; }
+  .chart-scroll { overflow-x: auto; overflow-y: hidden; margin-top: 16px; overscroll-behavior-x: contain; scrollbar-color: var(--muted) var(--bg); }
+  .chart-track { height: 390px; }
+  canvas { display: block; position: sticky; left: 0; height: 390px; touch-action: pan-x; }
+  .empty { color: var(--muted); text-align: center; padding: 70px 20px; }
+  .selection { display: flex; align-items: center; justify-content: space-between; gap: 15px; min-height: 42px; border-top: 1px solid var(--line); margin-top: 5px; padding-top: 13px; }
+  #selection-label { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, .chart-scroll:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  #reset { flex: none; border: 1px solid var(--line); border-radius: 7px; background: var(--card); padding: 5px 10px; font-size: 12px; }
+  #reset:disabled { opacity: .4; cursor: default; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 18px 0 0; list-style: none; }
+  .legend button { display: flex; gap: 7px; align-items: center; border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; background: var(--card); font-size: 12px; text-align: left; overflow-wrap: anywhere; }
+  .legend button[aria-pressed="true"] { border-color: var(--accent); background: var(--soft); }
+  .legend button.dimmed { opacity: .45; }
+  .swatch { flex: none; width: 10px; height: 10px; border-radius: 3px; }
+  .legend-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .notes { color: var(--muted); font-size: 12px; margin: 16px 2px 0; }
+  .notes p { margin: 5px 0; }
+  #tooltip { position: fixed; z-index: 10; pointer-events: none; max-width: min(340px, calc(100vw - 20px)); padding: 11px 14px; border-radius: 9px; background: var(--tooltip); color: var(--tooltip-fg); box-shadow: 0 6px 26px #0003; font-size: 12px; line-height: 1.6; }
+  #tooltip strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+  #tooltip-date { opacity: .75; margin-bottom: 4px; }
+  #tooltip-total { font-weight: 650; }
+  [hidden] { display: none !important; }
+  @media (max-width: 600px) {
+    main { padding: 24px 12px 36px; }
+    .panel { padding: 16px 10px 12px; border-radius: 12px; }
+    .stats { gap: 18px 28px; }
+    .stat strong { font-size: 22px; }
+    .legend { gap: 6px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Your conversations, day by day</p>
+  <h1>Daily texts</h1>
+  <p id="meta" class="meta"></p>
+  <div class="stats" aria-label="Message totals">
+    <div class="stat"><strong id="total">0</strong><span id="total-label">messages</span></div>
+    <div class="stat"><strong id="sent">0</strong><span>sent</span></div>
+    <div class="stat"><strong id="received">0</strong><span>received</span></div>
+    <div class="stat"><strong id="average">0</strong><span>per day</span></div>
+  </div>
+  <section class="panel" aria-labelledby="chart-heading">
+    <div class="chart-heading">
+      <h2 id="chart-heading">Messages by person</h2>
+      <p class="help">Hover for details · Double-click a segment to highlight</p>
+    </div>
+    <div id="chart-scroll" class="chart-scroll" tabindex="0" aria-label="Daily text chart; scroll horizontally to see more days">
+      <div id="chart-track" class="chart-track">
+        <canvas id="chart" role="img" aria-label="Stacked daily message counts, colored by person. Use the legend below to highlight a person."></canvas>
+      </div>
+    </div>
+    <p id="empty" class="empty" hidden>No messages in this date range.</p>
+    <div class="selection">
+      <p id="selection-label" aria-live="polite">All conversations · Select a name below to highlight it.</p>
+      <button id="reset" type="button" disabled>Clear highlight</button>
+    </div>
+    <ul id="legend" class="legend" aria-label="People and group chats"></ul>
+  </section>
+  <footer class="notes"><p id="mode-note"></p><p id="threshold-note"></p><p id="scroll-note" hidden>Scroll horizontally to see every day. Highlighting keeps the full daily totals in place; press Escape to clear it.</p></footer>
+  <noscript><p>Please enable JavaScript to display the chart.</p></noscript>
+</main>
+<div id="tooltip" role="tooltip" hidden><strong id="tooltip-name"></strong><div id="tooltip-date"></div><div id="tooltip-total"></div><div id="tooltip-split"></div></div>
+<script id="chart-data" type="application/json">__CHART_DATA__</script>
+<script>
+(() => {
+  'use strict';
+  const data = JSON.parse(document.getElementById('chart-data').textContent);
+  const $ = id => document.getElementById(id);
+  const format = new Intl.NumberFormat();
+  const shortDate = new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric'});
+  const longDate = new Intl.DateTimeFormat(undefined, {weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'});
+  // Noon prevents UTC parsing from moving local calendar dates to the previous day.
+  const dateOf = value => new Date(value + 'T12:00:00');
+  const dates = data.dates;
+  const palette = ['#5875df', '#dd8e45', '#38a58d', '#b672c9', '#de687c', '#4eacc7', '#9b9940', '#94705c', '#7187a7', '#cf78a6', '#8b6ade', '#baab52'];
+  const series = data.series.map((item, index) => ({...item,
+    color: item.kind === 'other' ? '#9198a5' : palette[index] || `hsl(${Math.round(index * 137.508) % 360}, 57%, 55%)`,
+    total: item.sent.reduce((a, b) => a + b, 0) + item.received.reduce((a, b) => a + b, 0)
+  }));
+  const totals = dates.map((_, day) => series.reduce((n, person) => n + person.sent[day] + person.received[day], 0));
+  const sent = series.reduce((n, person) => n + person.sent.reduce((a, b) => a + b, 0), 0);
+  const received = series.reduce((n, person) => n + person.received.reduce((a, b) => a + b, 0), 0);
+  $('total').textContent = format.format(sent + received);
+  $('sent').textContent = format.format(sent);
+  $('received').textContent = format.format(received);
+  $('average').textContent = new Intl.NumberFormat(undefined, {maximumFractionDigits: 1}).format(dates.length ? (sent + received) / dates.length : 0);
+  const period = data.days === -1 ? 'All history' : `Last ${data.days} ${data.days === 1 ? 'day' : 'days'}`;
+  const range = dates.length ? ` · ${longDate.format(dateOf(dates[0]))} – ${longDate.format(dateOf(dates[dates.length - 1]))}` : '';
+  $('meta').textContent = `${period}${range} · Generated ${data.generatedAt}`;
+  const modes = {
+    normal: '1:1 + shared groups. Each group message you send counts toward every member; received messages count toward their sender. Totals include these repeated attributions.',
+    conservative: '1:1 + conservative groups. A group message counts only when it directly follows one from the other person. Reactions and group events are ignored.',
+    separated: '1:1 + separate groups. Each group is its own color, and each group message counts once.'
+  };
+  $('mode-note').textContent = modes[data.gcMode] || '1:1 conversations only. Each segment combines sent and received messages; hover to see the split.';
+  if (data.gcMode === 'normal') $('total-label').textContent = 'attributed messages';
+  if (data.gcMode === 'separated') $('chart-heading').textContent = 'Messages by person and group';
+  $('threshold-note').textContent = data.minMessages > 0
+    ? `People${data.gcMode === 'separated' ? ' and groups' : ''} with fewer than ${format.format(data.minMessages)} sent + received messages on every day in this range are combined into Other.`
+    : 'Every person is shown separately (no minimum daily message count).';
+
+  const canvas = $('chart');
+  const ctx = canvas.getContext('2d');
+  const scroller = $('chart-scroll');
+  const track = $('chart-track');
+  const tooltip = $('tooltip');
+  const legendButtons = [];
+  const height = 390;
+  const margin = {left: 58, right: 16, top: 20, bottom: 54};
+  const plotHeight = height - margin.top - margin.bottom;
+  let selected = null;
+  let width = 0;
+  let step = 0;
+  let frame = 0;
+  let theme;
+  const maximum = totals.reduce((a, b) => Math.max(a, b), 0);
+  // Integer ticks keep sparse charts from showing fractions of a message.
+  const roughTick = Math.max(1, maximum / 5);
+  const magnitude = 10 ** Math.floor(Math.log10(roughTick));
+  const tick = [1, 2, 5, 10].map(n => n * magnitude).find(n => n >= roughTick);
+  const yMax = Math.max(tick, Math.ceil(maximum / tick) * tick);
+  const y = value => height - margin.bottom - value / yMax * plotHeight;
+
+  function choose(index) {
+    selected = index === selected ? null : index;
+    legendButtons.forEach((button, i) => {
+      button.setAttribute('aria-pressed', String(i === selected));
+      button.classList.toggle('dimmed', selected !== null && i !== selected);
+    });
+    $('reset').disabled = selected === null;
+    $('selection-label').textContent = selected === null
+      ? 'All conversations · Select a name below to highlight it.'
+      : `${series[selected].name} · ${format.format(series[selected].total)} messages in this range · Double-click again or clear to reset.`;
+    draw();
+  }
+
+  series.forEach((person, index) => {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('aria-pressed', 'false');
+    button.setAttribute('aria-label', `${person.name}: ${format.format(person.total)} messages. Highlight across all days.`);
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.backgroundColor = person.color;
+    swatch.setAttribute('aria-hidden', 'true');
+    const name = document.createElement('span');
+    name.textContent = person.name;
+    const count = document.createElement('span');
+    count.className = 'legend-count';
+    count.textContent = format.format(person.total);
+    button.append(swatch, name, count);
+    button.addEventListener('click', () => choose(index));
+    item.append(button);
+    $('legend').append(item);
+    legendButtons.push(button);
+  });
+
+  function draw() {
+    if (!width || !dates.length) return;
+    const offset = scroller.scrollLeft;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = theme.card;
+    ctx.fillRect(0, 0, width, height);
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right';
+    ctx.lineWidth = 1;
+    for (let value = 0; value <= yMax; value += tick) {
+      const yy = y(value);
+      ctx.strokeStyle = theme.line;
+      ctx.beginPath(); ctx.moveTo(margin.left, yy); ctx.lineTo(width - margin.right, yy); ctx.stroke();
+      ctx.fillStyle = theme.muted;
+      ctx.fillText(format.format(value), margin.left - 10, yy);
+    }
+    ctx.textAlign = 'left';
+    ctx.fillStyle = theme.muted;
+    ctx.fillText('Texts', 3, 8);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(margin.left, 0, width - margin.left - margin.right, height);
+    ctx.clip();
+    const first = Math.max(0, Math.floor(offset / step));
+    const last = Math.min(dates.length, Math.ceil((offset + width - margin.left) / step));
+    const barWidth = Math.max(1, step - Math.min(6, step * .25));
+    const labelEvery = Math.max(1, Math.ceil(85 / step));
+    const spansYears = dates[0].slice(0, 4) !== dates[dates.length - 1].slice(0, 4);
+    for (let day = first; day < last; day++) {
+      const xx = margin.left + day * step - offset + (step - barWidth) / 2;
+      let sum = 0;
+      for (let person = 0; person < series.length; person++) {
+        const count = series[person].sent[day] + series[person].received[day];
+        if (!count) continue;
+        ctx.globalAlpha = selected === null || selected === person ? 1 : .15;
+        ctx.fillStyle = series[person].color;
+        ctx.fillRect(xx, y(sum + count), barWidth, count / yMax * plotHeight);
+        sum += count;
+      }
+      ctx.globalAlpha = 1;
+      if (day % labelEvery === 0) {
+        const label = shortDate.format(dateOf(dates[day]));
+        const halfLabel = Math.max(ctx.measureText(label).width, spansYears ? ctx.measureText(dates[day].slice(0, 4)).width : 0) / 2;
+        const labelX = Math.max(margin.left + halfLabel, Math.min(xx + barWidth / 2, width - margin.right - halfLabel));
+        ctx.fillStyle = theme.muted;
+        ctx.textAlign = 'center';
+        ctx.fillText(label, labelX, height - margin.bottom + 19);
+        if (spansYears) ctx.fillText(dates[day].slice(0, 4), labelX, height - margin.bottom + 35);
+      }
+    }
+    ctx.restore();
+  }
+
+  function resize() {
+    width = scroller.clientWidth;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.style.width = width + 'px';
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    const contentWidth = Math.max(width, margin.left + margin.right + dates.length * 18);
+    track.style.width = contentWidth + 'px';
+    step = (contentWidth - margin.left - margin.right) / Math.max(1, dates.length);
+    const styles = getComputedStyle(document.documentElement);
+    theme = {card: styles.getPropertyValue('--card'), line: styles.getPropertyValue('--line'), muted: styles.getPropertyValue('--muted')};
+    $('scroll-note').hidden = contentWidth <= width;
+    draw();
+  }
+
+  function hit(event) {
+    const bounds = canvas.getBoundingClientRect();
+    const xx = event.clientX - bounds.left;
+    const yy = event.clientY - bounds.top;
+    if (xx < margin.left || xx > width - margin.right || yy < margin.top || yy >= height - margin.bottom) return null;
+    const slot = (xx - margin.left + scroller.scrollLeft) / step;
+    const day = Math.floor(slot);
+    if (day < 0 || day >= dates.length) return null;
+    const gap = Math.min(6, step * .25) / 2;
+    const within = (slot - day) * step;
+    if (within < gap || within > step - gap) return null;
+    const value = (height - margin.bottom - yy) / plotHeight * yMax;
+    let sum = 0;
+    for (let person = 0; person < series.length; person++) {
+      const count = series[person].sent[day] + series[person].received[day];
+      if (count && value >= sum && value < sum + count) return {day, person};
+      sum += count;
+    }
+    return null;
+  }
+
+  canvas.addEventListener('pointermove', event => {
+    const target = hit(event);
+    canvas.style.cursor = target ? 'pointer' : 'default';
+    if (!target) { tooltip.hidden = true; return; }
+    const person = series[target.person];
+    const day = target.day;
+    $('tooltip-name').textContent = person.name;
+    $('tooltip-date').textContent = longDate.format(dateOf(dates[day]));
+    $('tooltip-total').textContent = `${format.format(person.sent[day] + person.received[day])} messages`;
+    $('tooltip-split').textContent = `${format.format(person.sent[day])} sent by ${data.me} · ${format.format(person.received[day])} received`;
+    tooltip.hidden = false;
+    tooltip.style.left = Math.max(10, Math.min(event.clientX + 14, window.innerWidth - tooltip.offsetWidth - 10)) + 'px';
+    tooltip.style.top = Math.max(10, Math.min(event.clientY + 14, window.innerHeight - tooltip.offsetHeight - 10)) + 'px';
+  });
+  canvas.addEventListener('pointerleave', () => { tooltip.hidden = true; });
+  canvas.addEventListener('dblclick', event => {
+    const target = hit(event);
+    if (target) { event.preventDefault(); choose(target.person); }
+  });
+  $('reset').addEventListener('click', () => choose(null));
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { choose(null); tooltip.hidden = true; }
+  });
+  scroller.addEventListener('scroll', () => {
+    tooltip.hidden = true;
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(); });
+  }, {passive: true});
+  window.addEventListener('resize', resize);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', resize);
+  $('empty').hidden = sent + received > 0;
+  if (!dates.length) scroller.hidden = true;
+  resize();
+})();
+</script>
+</body>
+</html>
